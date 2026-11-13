@@ -35,6 +35,7 @@ except Exception:
 cliente_gemini = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None  
 cliente_claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
+
 PROMPT_SISTEMA = """
 You are Jarvis-TI, an elite software architecture, systems engineering, and bioinformatics AI assistant designed for technical portfolio demonstration and high-level problem solving.
 
@@ -108,7 +109,7 @@ if entrada_usuario:
                 prompt_atual = f"Histórico anterior:\n{historico_texto}\n\nPergunta atual: {texto_usuario}" if historico_texto else texto_usuario
                 conteudos = [imagem_pil, prompt_atual] if imagem_pil else [prompt_atual]
                 resposta_modelo = cliente_gemini.models.generate_content(
-                    model="gemini-flash-latest",
+                    model = "gemini-3.5-flash",
                     contents=conteudos,
                     config=types.GenerateContentConfig(
                         system_instruction=PROMPT_SISTEMA
