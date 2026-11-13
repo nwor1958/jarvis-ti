@@ -13,10 +13,15 @@
 #Requirements.txt
 
 import os
+import io
+import base64
 import streamlit as st
+from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 from anthropic import Anthropic
-
+from PIL import Image
+load_dotenv()
 
 st.set_page_config(page_title="Assistente TI - Portfólio", page_icon="💻", layout="wide")
 
@@ -46,6 +51,11 @@ You are Jarvis-TI, an elite software architecture, systems engineering, and bioi
 - If a query involves bioinformatics or complex data processing, suggest optimized memory structures or indexing strategies.
 - Maintain a professional, objective, and deeply technical tone. Avoid superficial placeholders; write functional patterns.
 """
+def imagem_para_base64(imagem_pil):
+    buffer = io.BytesIO()
+    imagem_pil.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
 with st.sidebar:
     st.header("⚙️ Configurações do Agente")
     modelo_escolhido = st.selectbox(
@@ -64,14 +74,26 @@ if "mensagem_lista" not in st.session_state:
 st.title("💻 Assistente de TI & Arquitetura de Software")
 
 for mensagem in st.session_state["mensagem_lista"]:
-    st.chat_message(mensagem["role"]).write(mensagem["content"])
+    with st.chat_message(mensagem["role"]):
+        if mensagem.get("image"):
+            st.image(mensagem["image"], width=350)
+        st.write(mensagem["content"])
 
-texto_usuario = st.chat_input("Digite sua mensagem técnica aqui...")
+entrada_usuario = st.chat_input(
+    "Digite sua mensagem ténica ou anexe uma imagem...",
+    accept_file=True,
+    file_type=["png", "jpg", "jpeg", "webp"]
+)
 
-if texto_usuario:
-    
-    st.chat_message("user").write(texto_usuario)
-    st.session_state["mensagem_lista"].append({"role": "user", "content": texto_usuario})
+if entrada_usuario:
+    texto_usuario = entrada_usuario.text or "Analise esta imagem técnica"
+    arquivos = entrada_usuario.files
+    imagem_pil = Image.open(arquivos[0]) if arquivos else None
+    with st.chat_message("user"):
+        if imagem_pil: 
+            st.image(imagem_pil, width=350)
+        st.write(texto_usuario)
+    st.session_state["mensagem_lista"].append({"role": "user", "content": texto_usuario, "image": imagem_pil})
     
     resposta_assistente = ""
 
@@ -80,12 +102,19 @@ if texto_usuario:
             if not GEMINI_KEY:
                 resposta_assistente = "Erro: A chave de API do Gemini não foi configurada."
             else: 
-                prompt_completo = f"System Instruction: {PROMPT_SISTEMA}\n\nHistory/Query: {st.session_state['mensagem_lista']}"
+                historico_texto = "\n".join(
+                    [f"{m['role']}: {m['content']}" for m in st.session_state["mensagem_lista"][:-1]]
+                )
+                prompt_atual = f"Histórico anterior:\n{historico_texto}\n\nPergunta atual: {texto_usuario}" if historico_texto else texto_usuario
+                conteudos = [imagem_pil, prompt_atual] if imagem_pil else [prompt_atual]
                 resposta_modelo = cliente_gemini.models.generate_content(
-                model='gemini-flash-latest',
-                contents=prompt_completo,
-            )
-            resposta_assistente = resposta_modelo.text
+                    model="gemini-flash-latest",
+                    contents=conteudos,
+                    config=types.GenerateContentConfig(
+                        system_instruction=PROMPT_SISTEMA
+                    )
+                )
+                resposta_assistente = resposta_modelo.text
 
         elif "Claude" in modelo_escolhido:
             if not ANTHROPIC_KEY:
@@ -97,13 +126,32 @@ if texto_usuario:
                     "no `.env` e ele funcionará instantaneamente!"
                 )
             else:
+                mensagem_claude = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state["mensagem_lista"][:-1]
+                ]
+                if imagem_pil: 
+                    conteudo_atual = [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png", 
+                                "data": imagem_para_base64(imagem_pil)
+                            }
+                        },
+                        {"type": "text", "text": texto_usuario}
+                    ]
+                else: 
+                    conteudo_atual = texto_usuario
+                mensagem_claude.append({"role": "user", "content": conteudo_atual})
                 resposta_modelo = cliente_claude.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1500,
-                system=PROMPT_SISTEMA,
-                messages=[{"role": m["role"], "content": m["content"]} for m in st.session_state["mensagem_lista"]]
-            )
-            resposta_assistente = resposta_modelo.content[0].text
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1500,
+                    system=PROMPT_SISTEMA,
+                    messages=mensagem_claude
+                )
+                resposta_assistente = resposta_modelo.content[0].text
 
     except Exception as e:
         resposta_assistente = f"Ocorreu um erro de conexão com a API escolhida: {str(e)}"
